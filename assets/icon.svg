@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1f3c"/>
+      <stop offset="100%" stop-color="#0d111f"/>
+    </linearGradient>
+    <linearGradient id="ipadGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38405c"/>
+      <stop offset="100%" stop-color="#22273d"/>
+    </linearGradient>
+    <linearGradient id="screenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#60b8ff"/>
+      <stop offset="100%" stop-color="#0a84ff"/>
+    </linearGradient>
+    <clipPath id="bg_clip">
+      <rect width="1024" height="1024" rx="220"/>
+    </clipPath>
+  </defs>
+
+  <!-- App icon background (rounded rectangle like macOS) -->
+  <rect width="1024" height="1024" rx="220" fill="url(#bgGrad)"/>
+
+  <!-- Subtle inner glow -->
+  <rect width="1024" height="1024" rx="220" fill="none"
+        stroke="#2a3060" stroke-width="3"/>
+
+  <!-- iPad body -->
+  <rect x="292" y="108" width="440" height="808" rx="52"
+        fill="url(#ipadGrad)" stroke="#485070" stroke-width="3"/>
+
+  <!-- Screen bezel (inner inset) -->
+  <rect x="316" y="192" width="392" height="616" rx="14" fill="#090d1a"/>
+
+  <!-- Screen content -->
+  <rect x="320" y="196" width="384" height="608" rx="12"
+        fill="url(#screenGrad)"/>
+
+  <!-- Screen top reflection -->
+  <rect x="320" y="196" width="384" height="140" rx="12"
+        fill="white" opacity="0.07"/>
+
+  <!-- Simulated UI lines on screen -->
+  <rect x="360" y="278" width="304" height="18" rx="9" fill="white" opacity="0.28"/>
+  <rect x="360" y="316" width="220" height="13" rx="6" fill="white" opacity="0.17"/>
+  <rect x="360" y="382" width="304" height="190" rx="14" fill="white" opacity="0.07"/>
+  <rect x="360" y="598" width="160" height="13" rx="6" fill="white" opacity="0.18"/>
+  <rect x="360" y="632" width="210" height="13" rx="6" fill="white" opacity="0.13"/>
+  <rect x="360" y="666" width="130" height="13" rx="6" fill="white" opacity="0.10"/>
+
+  <!-- Front camera dot -->
+  <circle cx="512" cy="152" r="12" fill="#0d111f"/>
+  <circle cx="512" cy="152" r="6"  fill="#1a2040"/>
+
+  <!-- Home indicator bar -->
+  <rect x="457" y="852" width="110" height="11" rx="5.5" fill="#485070"/>
+
+  <!-- Broadcasting arcs — LEFT -->
+  <path d="M 232 428 Q 166 512 232 596"
+        stroke="#60b8ff" stroke-width="24" fill="none"
+        stroke-linecap="round" opacity="0.95"/>
+  <path d="M 158 372 Q 66 512 158 652"
+        stroke="#60b8ff" stroke-width="17" fill="none"
+        stroke-linecap="round" opacity="0.52"/>
+  <path d="M 84 316 Q -34 512 84 708"
+        stroke="#60b8ff" stroke-width="11" fill="none"
+        stroke-linecap="round" opacity="0.23"/>
+
+  <!-- Broadcasting arcs — RIGHT -->
+  <path d="M 792 428 Q 858 512 792 596"
+        stroke="#60b8ff" stroke-width="24" fill="none"
+        stroke-linecap="round" opacity="0.95"/>
+  <path d="M 866 372 Q 958 512 866 652"
+        stroke="#60b8ff" stroke-width="17" fill="none"
+        stroke-linecap="round" opacity="0.52"/>
+  <path d="M 940 316 Q 1058 512 940 708"
+        stroke="#60b8ff" stroke-width="11" fill="none"
+        stroke-linecap="round" opacity="0.23"/>
+
+  <!-- Subtle blue glow beneath iPad -->
+  <ellipse cx="512" cy="940" rx="200" ry="22" fill="#0a84ff" opacity="0.12"/>
+</svg>
