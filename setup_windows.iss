@@ -37,11 +37,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &Desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
-; The single-file exe built by PyInstaller
-Source: "dist\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-
-; App icon for the uninstaller entry
-Source: "assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\{#AppExeName}";    DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\tunnel_helper.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "assets\icon.ico";        DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; Start Menu

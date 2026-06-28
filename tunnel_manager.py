@@ -87,9 +87,13 @@ class TunnelManager:
         """Return the tunnel command, using the bundled helper when packaged."""
         import os, sys
         if sys.platform == "win32":
-            # Windows: no sudo; app must be run as Administrator
-            py = "python"
-            return [py, "-m", "pymobiledevice3", "remote", "start-tunnel", "--script-mode"]
+            # When frozen, call the bundled tunnel_helper.exe (admin rights inherited)
+            if getattr(sys, "frozen", False):
+                helper = os.path.join(os.path.dirname(sys.executable), "tunnel_helper.exe")
+                if os.path.exists(helper):
+                    return [helper]
+            # Dev mode fallback
+            return ["python", "-m", "pymobiledevice3", "remote", "start-tunnel", "--script-mode"]
         # macOS/Linux: use sudo -S with password via stdin
         if getattr(sys, "frozen", False):
             exe_dir = os.path.dirname(sys.executable)

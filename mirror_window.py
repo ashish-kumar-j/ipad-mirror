@@ -18,7 +18,7 @@ from PyQt6.QtGui import QPixmap, QKeySequence, QShortcut
 from device_stream import DeviceStream
 from tunnel_manager import TunnelManager
 
-_POLL_MS = 16
+_POLL_MS = 8
 
 # Status colours
 _C_IDLE  = "#636366"

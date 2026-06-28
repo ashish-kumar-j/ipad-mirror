@@ -12,6 +12,10 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 # Collect everything pymobiledevice3 needs (it uses dynamic imports heavily)
 pm3_data, pm3_bins, pm3_hidden = collect_all("pymobiledevice3")
 
+# pytun_pmd3 ships wintun.dll (Windows TUN driver) as package data —
+# collect_all("pymobiledevice3") misses it because it's a separate package
+pytun_data, pytun_bins, pytun_hidden = collect_all("pytun_pmd3")
+
 # Include dist-info for packages that call importlib.metadata.version() on
 # themselves at import time (fails in bundles without this)
 meta_data = copy_metadata("pymobiledevice3")
@@ -36,9 +40,9 @@ extra_hidden = [
 main_a = Analysis(
     ["main.py"],
     pathex=["."],
-    binaries=pm3_bins,
-    datas=[("assets", "assets")] + pm3_data + meta_data,
-    hiddenimports=pm3_hidden + extra_hidden,
+    binaries=pm3_bins + pytun_bins,
+    datas=[("assets", "assets")] + pm3_data + pytun_data + meta_data,
+    hiddenimports=pm3_hidden + pytun_hidden + extra_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -53,9 +57,9 @@ main_pyz = PYZ(main_a.pure)
 helper_a = Analysis(
     ["tunnel_helper.py"],
     pathex=["."],
-    binaries=pm3_bins,
-    datas=pm3_data + meta_data,
-    hiddenimports=pm3_hidden + extra_hidden,
+    binaries=pm3_bins + pytun_bins,
+    datas=pm3_data + pytun_data + meta_data,
+    hiddenimports=pm3_hidden + pytun_hidden + extra_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -65,31 +69,31 @@ helper_a = Analysis(
 
 helper_pyz = PYZ(helper_a.pure)
 
-helper_exe = EXE(
-    helper_pyz,
-    helper_a.scripts,
-    [],
-    exclude_binaries=True,
-    name="tunnel_helper",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    console=True,      # must stay as CLI (not windowed) – it writes to stdout
-)
-
-helper_coll = COLLECT(
-    helper_exe,
-    helper_a.binaries,
-    helper_a.datas,
-    strip=False,
-    upx=False,
-    name="tunnel_helper_collect",
-)
-
 # ── macOS .app bundle ────────────────────────────────────────────────────────
 
 if sys.platform == "darwin":
+    helper_exe = EXE(
+        helper_pyz,
+        helper_a.scripts,
+        [],
+        exclude_binaries=True,
+        name="tunnel_helper",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=True,
+    )
+
+    helper_coll = COLLECT(
+        helper_exe,
+        helper_a.binaries,
+        helper_a.datas,
+        strip=False,
+        upx=False,
+        name="tunnel_helper_collect",
+    )
+
     main_exe = EXE(
         main_pyz,
         main_a.scripts,
@@ -104,12 +108,11 @@ if sys.platform == "darwin":
         icon="assets/icon.icns",
     )
 
-    # Bundle tunnel_helper inside the .app's MacOS directory
     coll = COLLECT(
         main_exe,
         main_a.binaries,
         main_a.datas,
-        helper_exe,          # <── tunnel_helper sits next to the main binary
+        helper_exe,
         helper_a.binaries,
         helper_a.datas,
         strip=False,
@@ -137,6 +140,22 @@ if sys.platform == "darwin":
 # ── Windows .exe ──────────────────────────────────────────────────────────────
 
 else:
+    # tunnel_helper as a standalone onefile exe — placed next to iPad Mirror.exe
+    helper_exe = EXE(
+        helper_pyz,
+        helper_a.scripts,
+        helper_a.binaries,
+        helper_a.datas,
+        [],
+        name="tunnel_helper",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        console=True,
+        onefile=True,
+    )
+
     main_exe = EXE(
         main_pyz,
         main_a.scripts,
@@ -150,7 +169,7 @@ else:
         upx=True,
         console=False,
         icon="assets/icon.ico",
-        uac_admin=True,        # auto-prompt UAC elevation on Windows
+        uac_admin=True,
         manifest="uac_manifest.xml",
         onefile=True,
     )

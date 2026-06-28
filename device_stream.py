@@ -3,7 +3,7 @@ import concurrent.futures
 import threading
 import time
 from PyQt6.QtGui import QImage
-from PyQt6.QtCore import QByteArray, QSize, Qt
+from PyQt6.QtCore import QSize, Qt
 
 
 class DeviceStream:
@@ -93,7 +93,8 @@ class DeviceStream:
 
     def _decode_and_scale(self, png_bytes: bytes, stamp: int) -> tuple:
         raw = QImage()
-        raw.loadFromData(QByteArray(png_bytes), "PNG")
+        # Pass bytes directly — avoids an unnecessary QByteArray copy
+        raw.loadFromData(png_bytes, "PNG")
         with self._lock:
             self._raw = raw
         return self._scale(raw), stamp
@@ -132,7 +133,7 @@ class DeviceStream:
 
     async def _frame_loop(self, take_fn):
         loop = asyncio.get_running_loop()
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
         frame_count = 0
         fps_timer = time.monotonic()
