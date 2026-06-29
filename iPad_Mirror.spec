@@ -16,6 +16,9 @@ pm3_data, pm3_bins, pm3_hidden = collect_all("pymobiledevice3")
 # collect_all("pymobiledevice3") misses it because it's a separate package
 pytun_data, pytun_bins, pytun_hidden = collect_all("pytun_pmd3")
 
+# PyAV ships static FFmpeg DLLs — collect_all picks them up
+av_data, av_bins, av_hidden = collect_all("av")
+
 # Include dist-info for packages that call importlib.metadata.version() on
 # themselves at import time (fails in bundles without this)
 meta_data = copy_metadata("pymobiledevice3")
@@ -28,6 +31,15 @@ extra_hidden = [
     "pymobiledevice3.remote.common",
     "pymobiledevice3.services.dvt.instruments.dvt_provider",
     "pymobiledevice3.services.dvt.instruments.screenshot",
+    # HEVC streaming path
+    "pymobiledevice3.remote.core_device.display_service",
+    "pymobiledevice3.remote.core_device.screen_stream",
+    "pymobiledevice3.remote.core_device.hevc_av",
+    "pymobiledevice3.remote.core_device.hevc_rps",
+    "pymobiledevice3.remote.core_device.media_stream_offer",
+    "pymobiledevice3.remote.core_device.vt_jpeg",
+    "av",
+    "av.codec",
     "cryptography",
     "construct",
     "ifaddr",
@@ -40,9 +52,9 @@ extra_hidden = [
 main_a = Analysis(
     ["main.py"],
     pathex=["."],
-    binaries=pm3_bins + pytun_bins,
-    datas=[("assets", "assets")] + pm3_data + pytun_data + meta_data,
-    hiddenimports=pm3_hidden + pytun_hidden + extra_hidden,
+    binaries=pm3_bins + pytun_bins + av_bins,
+    datas=[("assets", "assets")] + pm3_data + pytun_data + av_data + meta_data,
+    hiddenimports=pm3_hidden + pytun_hidden + av_hidden + extra_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
