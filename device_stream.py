@@ -1,5 +1,9 @@
 """
-iPad screen capture — two paths tried in order:
+iPad screen capture — three paths tried in order:
+
+  0. AVFoundation / CoreMediaIO  (macOS only, no tunnel/sudo needed, QuickTime-level latency)
+     Same API QuickTime Player uses — kernel-level USB capture via CMIO DAL plugin.
+     Requires: pip install pyobjc-framework-AVFoundation pyobjc-framework-CoreMedia pyobjc-framework-CoreVideo
 
   1. HEVC via com.apple.coredevice.displayservice   (iOS 17+, ~30 ms lag, ~60 fps)
      RTP/HEVC over UDP, decoded by VideoToolbox (macOS) or PyAV/FFmpeg (Windows).
@@ -12,10 +16,11 @@ import asyncio
 import contextlib
 import random
 import struct
+import sys
 import threading
 import time
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QSize, pyqtSignal
 from PyQt6.QtGui import QImage
 
 
@@ -32,6 +37,10 @@ class DeviceStream(QObject):
     # main thread with no polling delay.
     frame_ready = pyqtSignal(QImage, int)   # (raw_frame, frame_id)
 
+    # Emitted when the AVFoundation path fails, so the UI can fall back to
+    # showing the tunnel/password dialog.
+    avf_failed = pyqtSignal(str)            # reason string
+
     def __init__(self):
         super().__init__()
         self.running = False
@@ -43,8 +52,11 @@ class DeviceStream(QObject):
         self._frame_count = 0
         self._fps_timer = 0.0
         self._error = None
-        self._streaming_mode = "connecting"    # "hevc" | "dvt" | "connecting"
-        # HEVC decoder (HevcToBgraTranscoder, created lazily)
+        self._streaming_mode = "connecting"    # "avf" | "hevc" | "dvt" | "connecting"
+        # AVFoundation session (Path 0)
+        self._avf_stream = None
+        self._avf_done: threading.Event | None = None
+        # HEVC decoder (HevcToBgraTranscoder, created lazily, Path 1)
         self._transcoder = None
         # RTCP bookkeeping
         self._local_ssrc = random.randint(1, 0xFFFF_FFFF)
@@ -76,6 +88,9 @@ class DeviceStream(QObject):
 
     def stop(self):
         self.running = False
+        # Wake up the AVF blocking loop so _run() can exit
+        if self._avf_done is not None:
+            self._avf_done.set()
         if self._thread:
             self._thread.join(timeout=5)
         self._thread = None
@@ -115,6 +130,17 @@ class DeviceStream(QObject):
     # ------------------------------------------------------------------
 
     def _run(self):
+        # ── Path 0: AVFoundation (macOS only, no tunnel, QuickTime latency) ──
+        if sys.platform == "darwin":
+            err = self._try_avf()
+            if err is None:
+                return   # AVF ran cleanly until stopped
+            # Emit from this thread → Qt queues the signal to the main thread
+            self.avf_failed.emit(err)
+            if not self._rsd_host:
+                return   # No tunnel host available → nothing more to try
+
+        # ── Path 1+2: asyncio HEVC → DVT (requires RSD tunnel host) ──
         loop = asyncio.new_event_loop()
         loop.set_exception_handler(lambda l, ctx: None)
         asyncio.set_event_loop(loop)
@@ -122,6 +148,51 @@ class DeviceStream(QObject):
             loop.run_until_complete(self._capture_loop())
         finally:
             loop.close()
+
+    # ------------------------------------------------------------------
+    # Path 0 — AVFoundation
+    # ------------------------------------------------------------------
+
+    def _try_avf(self) -> str | None:
+        """
+        Attempt to stream via AVFoundation/CoreMediaIO.
+        Returns None on clean success, or an error string on failure.
+        """
+        try:
+            from avf_stream import AVFStream
+        except ImportError as e:
+            return f"pyobjc not installed ({e})"
+
+        try:
+            avf = AVFStream(self._on_avf_frame)
+            device_name = avf.start()   # raises RuntimeError on failure
+        except Exception as e:
+            return str(e)
+
+        self._streaming_mode = "avf"
+        self._avf_stream = avf
+        self._fps_timer = time.monotonic()
+        self._frame_count = 0
+
+        # Block this thread until stop() is called
+        self._avf_done = threading.Event()
+        self._avf_done.wait()
+
+        avf.stop()
+        self._avf_stream = None
+        self._avf_done   = None
+        return None
+
+    def _on_avf_frame(self, bgra: bytes, width: int, height: int, bpr: int) -> None:
+        """Called from AVFoundation's dispatch queue for each decoded frame."""
+        # bpr (bytes per row) may include padding — pass it to QImage directly.
+        raw = QImage(bgra, width, height, bpr, QImage.Format.Format_BGRA8888).copy()
+        with self._lock:
+            self._raw = raw
+            self._raw_id += 1
+            fid = self._raw_id
+        self._tick_fps()
+        self.frame_ready.emit(raw, fid)
 
     async def _capture_loop(self):
         try:
@@ -174,7 +245,17 @@ class DeviceStream(QObject):
                 client_session_id = (
                     raw_sid if isinstance(raw_sid, _uuid.UUID) else _uuid.UUID(raw_sid)
                 )
-                sender_port = (conn.get("sender") or {}).get("port", 0)
+
+                # Extract RTCP destination and SSRCs from streamConfig.
+                # The device's perspective: LocalSSRC = device's SSRC,
+                # RemoteSSRC = our SSRC, SourcePort = the port we send RTCP to.
+                # (Matching ScreenStreamServer.py's extraction logic.)
+                stream_cfg = conn.get("streamConfig", {})
+                sender_port = int(stream_cfg.get("SourcePort", 0))
+                if stream_cfg.get("LocalSSRC"):
+                    self._remote_ssrc = int(stream_cfg["LocalSSRC"])
+                if stream_cfg.get("RemoteSSRC"):
+                    self._local_ssrc  = int(stream_cfg["RemoteSSRC"])
 
                 self._streaming_mode = "hevc"
                 self._fps_timer = time.monotonic()
@@ -215,11 +296,12 @@ class DeviceStream(QObject):
                         if hdr + 4 <= len(data):
                             hdr += 4 + int.from_bytes(data[hdr + 2: hdr + 4], "big") * 4
 
-                    # Track sequence number and SSRC for RTCP RR
+                    # Track sequence number for RTCP RR.
+                    # remote_ssrc was pre-filled from streamConfig; fall back
+                    # to the first RTP packet's SSRC if streamConfig omitted it.
                     seq = int.from_bytes(data[2:4], "big")
-                    ssrc = int.from_bytes(data[8:12], "big")
                     if not self._remote_ssrc:
-                        self._remote_ssrc = ssrc
+                        self._remote_ssrc = int.from_bytes(data[8:12], "big")
                     self._rtp_packets_received += 1
                     cyc = (self._rtp_highest_seq >> 16) & 0xFFFF
                     lo16 = self._rtp_highest_seq & 0xFFFF

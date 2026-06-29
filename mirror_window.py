@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QThread, QObject, QEvent, pyqtSignal
 from PyQt6.QtGui import QPixmap, QKeySequence, QShortcut
 
+import sys
+
 from device_stream import DeviceStream
 from tunnel_manager import TunnelManager
 
@@ -210,15 +212,17 @@ class MirrorWindow(QMainWindow):
         self.setMinimumSize(400, 560)
         self.resize(500, 760)
 
-        self._stream        = None
-        self._tunnel_thread = None
-        self._rsd_host      = None
-        self._rsd_port      = None
-        self._ios_version   = None
-        self._is_fullscreen = False
-        self._pin_active    = False
-        self._fill_active   = False
-        self._last_frame_id = -1       # dedup: skip setPixmap if frame hasn't changed
+        self._stream          = None
+        self._tunnel_thread   = None
+        self._rsd_host        = None
+        self._rsd_port        = None
+        self._ios_version     = None
+        self._is_fullscreen   = False
+        self._pin_active      = False
+        self._fill_active     = False
+        self._last_frame_id   = -1     # dedup: skip setPixmap if frame hasn't changed
+        # AVFoundation state: None = untested, True = works, False = failed
+        self._avf_available   = None
 
         self._build_ui()
         # Slow watchdog — only checks for stream errors, not frame delivery
@@ -318,14 +322,20 @@ class MirrorWindow(QMainWindow):
             self._start()
 
     def _start(self):
-        if (self._ios_version is None or self._ios_version >= 17) and not self._rsd_host:
-            import sys
+        # Path 0: Try AVFoundation first on macOS — no password/tunnel needed.
+        # Falls back to HEVC/DVT tunnel path only when AVF is unavailable.
+        if sys.platform == "darwin" and self._avf_available is not False:
+            self._begin_capture(try_avf=True)
+            return
+
+        # Path 1+2: Tunnel → HEVC/DVT  (Windows, or macOS after AVF failed)
+        if not self._rsd_host:
             if sys.platform == "win32":
                 self._start_tunnel_windows()
             else:
                 self._prompt_tunnel()
             return
-        self._begin_capture()
+        self._begin_capture(try_avf=False)
 
     def _start_tunnel_windows(self):
         """On Windows no password is needed — the app must run as Administrator."""
@@ -344,16 +354,34 @@ class MirrorWindow(QMainWindow):
         self._tunnel_thread.failed.connect(self._on_tunnel_failed)
         self._tunnel_thread.start()
 
-    def _begin_capture(self):
+    def _begin_capture(self, try_avf: bool = False):
         self._stream = DeviceStream()
         self._stream.set_display_size(self._screen.size())
         self._stream.set_fill_mode(self._fill_active)
         self._stream.frame_ready.connect(self._on_frame)
+        if try_avf:
+            self._stream.avf_failed.connect(self._on_avf_failed)
         self._stream.start(rsd_host=self._rsd_host, rsd_port=self._rsd_port)
         self._timer.start(500)   # watchdog: check for errors every 500 ms
         self._start_btn.setText("⏹  Stop Mirroring")
         self._start_btn.setStyleSheet(_btn_qss(_B_STOP))
         self._header.set_status("Connecting…", _C_WAIT)
+
+    def _on_avf_failed(self, reason: str):
+        """AVFoundation path failed — remember it and fall back to tunnel."""
+        self._avf_available = False
+        self._stop()
+
+        # If we already have a tunnel from a previous session, use it immediately.
+        if self._rsd_host:
+            self._begin_capture(try_avf=False)
+            return
+
+        # Otherwise prompt for tunnel (password dialog or Windows admin check).
+        if sys.platform == "win32":
+            self._start_tunnel_windows()
+        else:
+            self._prompt_tunnel()
 
     def _stop(self):
         self._timer.stop()
@@ -500,6 +528,11 @@ class MirrorWindow(QMainWindow):
         if frame_id == self._last_frame_id or raw.isNull():
             return
         self._last_frame_id = frame_id
+
+        # First frame from AVF path → mark it as confirmed working
+        if self._stream and self._stream.streaming_mode == "avf":
+            self._avf_available = True
+
         size = self._screen.size()
         if self._fill_active:
             scaled = raw.scaled(size,
@@ -517,8 +550,9 @@ class MirrorWindow(QMainWindow):
             QPixmap.fromImage(scaled, Qt.ImageConversionFlag.ColorOnly)
         )
         if self._stream:
+            mode = self._stream.streaming_mode.upper()
             self._header.set_status(
-                f"Mirroring  •  {self._stream.fps:.1f} fps", _C_OK)
+                f"Mirroring  •  {self._stream.fps:.1f} fps  •  {mode}", _C_OK)
 
     # ------------------------------------------------------------------
     # Qt overrides
