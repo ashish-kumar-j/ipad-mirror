@@ -221,8 +221,9 @@ class MirrorWindow(QMainWindow):
         self._last_frame_id = -1       # dedup: skip setPixmap if frame hasn't changed
 
         self._build_ui()
+        # Slow watchdog — only checks for stream errors, not frame delivery
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
+        self._timer.timeout.connect(self._watchdog)
         self._start_version_check()
 
     # ------------------------------------------------------------------
@@ -347,8 +348,9 @@ class MirrorWindow(QMainWindow):
         self._stream = DeviceStream()
         self._stream.set_display_size(self._screen.size())
         self._stream.set_fill_mode(self._fill_active)
+        self._stream.frame_ready.connect(self._on_frame)
         self._stream.start(rsd_host=self._rsd_host, rsd_port=self._rsd_port)
-        self._timer.start(_POLL_MS)
+        self._timer.start(500)   # watchdog: check for errors every 500 ms
         self._start_btn.setText("⏹  Stop Mirroring")
         self._start_btn.setStyleSheet(_btn_qss(_B_STOP))
         self._header.set_status("Connecting…", _C_WAIT)
@@ -487,19 +489,17 @@ class MirrorWindow(QMainWindow):
     # Frame update
     # ------------------------------------------------------------------
 
-    def _tick(self):
-        if not self._stream:
-            return
-        if self._stream.error:
+    def _watchdog(self):
+        """500 ms timer — only used to catch stream errors after connect."""
+        if self._stream and self._stream.error:
             self._stop()
             self._header.set_status(f"Error: {self._stream.error}", _C_ERR)
-            return
-        raw, frame_id = self._stream.get_latest_frame()
-        if raw is None or raw.isNull() or frame_id == self._last_frame_id:
+
+    def _on_frame(self, raw: QImage, frame_id: int):
+        """Called instantly on the Qt main thread the moment a frame is decoded."""
+        if frame_id == self._last_frame_id or raw.isNull():
             return
         self._last_frame_id = frame_id
-        # Scale in the main thread with FastTransformation (10× faster than Smooth,
-        # visually indistinguishable at video frame rates)
         size = self._screen.size()
         if self._fill_active:
             scaled = raw.scaled(size,
@@ -513,8 +513,12 @@ class MirrorWindow(QMainWindow):
             scaled = raw.scaled(size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.FastTransformation)
-        self._screen.setPixmap(QPixmap.fromImage(scaled))
-        self._header.set_status(f"Mirroring  •  {self._stream.fps:.1f} fps", _C_OK)
+        self._screen.setPixmap(
+            QPixmap.fromImage(scaled, Qt.ImageConversionFlag.ColorOnly)
+        )
+        if self._stream:
+            self._header.set_status(
+                f"Mirroring  •  {self._stream.fps:.1f} fps", _C_OK)
 
     # ------------------------------------------------------------------
     # Qt overrides

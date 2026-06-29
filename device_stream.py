@@ -15,6 +15,7 @@ import struct
 import threading
 import time
 
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QImage
 
 
@@ -25,8 +26,14 @@ _NAL_PPS = 34
 _KEY_NAL_TYPES = {19, 20, 21}   # IDR_W_RADL, IDR_N_LP, CRA_NUT
 
 
-class DeviceStream:
+class DeviceStream(QObject):
+    # Emitted from the decode thread the instant a new raw frame is ready.
+    # Qt queues it automatically across the thread boundary → slot runs on the
+    # main thread with no polling delay.
+    frame_ready = pyqtSignal(QImage, int)   # (raw_frame, frame_id)
+
     def __init__(self):
+        super().__init__()
         self.running = False
         self._raw: QImage | None = None        # latest decoded frame (unscaled)
         self._raw_id: int = 0                  # incremented on every new raw frame
@@ -300,7 +307,11 @@ class DeviceStream:
         with self._lock:
             self._raw = raw
             self._raw_id += 1
+            fid = self._raw_id
         self._tick_fps()
+        # Signal delivery is queued across the thread boundary → runs on main
+        # thread immediately, no timer poll delay.
+        self.frame_ready.emit(raw, fid)
 
     async def _rtcp_loop(self, transport, sender_ip: str, sender_port: int) -> None:
         """Send RTCP Receiver Reports every second — keeps the device encoder alive."""
@@ -353,7 +364,9 @@ class DeviceStream:
                 with self._lock:
                     self._raw = raw
                     self._raw_id += 1
+                    fid = self._raw_id
                 self._tick_fps()
+                self.frame_ready.emit(raw, fid)
                 png = await cap
                 fut = loop.run_in_executor(executor, self._decode_png, png)
         finally:
