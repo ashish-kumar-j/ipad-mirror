@@ -221,8 +221,6 @@ class MirrorWindow(QMainWindow):
         self._pin_active      = False
         self._fill_active     = False
         self._last_frame_id   = -1     # dedup: skip setPixmap if frame hasn't changed
-        # AVFoundation state: None = untested, True = works, False = failed
-        self._avf_available   = None
 
         self._build_ui()
         # Slow watchdog — only checks for stream errors, not frame delivery
@@ -322,13 +320,11 @@ class MirrorWindow(QMainWindow):
             self._start()
 
     def _start(self):
-        # Path 0: Try AVFoundation first on macOS — no password/tunnel needed.
-        # Falls back to HEVC/DVT tunnel path only when AVF is unavailable.
-        if sys.platform == "darwin" and self._avf_available is not False:
-            self._begin_capture(try_avf=True)
-            return
-
-        # Path 1+2: Tunnel → HEVC/DVT  (Windows, or macOS after AVF failed)
+        # macOS 15 (Sequoia) changed the CMIO DAL plugin behaviour — iOS devices
+        # no longer surface as AVCaptureDevice screen-mirror sources without
+        # QuickTime actively brokering the session.  Skip AVF and go straight to
+        # the tunnel path so we don't accidentally grab the iPhone Continuity
+        # Camera instead of the iPad screen.
         if not self._rsd_host:
             if sys.platform == "win32":
                 self._start_tunnel_windows()
@@ -359,29 +355,11 @@ class MirrorWindow(QMainWindow):
         self._stream.set_display_size(self._screen.size())
         self._stream.set_fill_mode(self._fill_active)
         self._stream.frame_ready.connect(self._on_frame)
-        if try_avf:
-            self._stream.avf_failed.connect(self._on_avf_failed)
         self._stream.start(rsd_host=self._rsd_host, rsd_port=self._rsd_port)
         self._timer.start(500)   # watchdog: check for errors every 500 ms
         self._start_btn.setText("⏹  Stop Mirroring")
         self._start_btn.setStyleSheet(_btn_qss(_B_STOP))
         self._header.set_status("Connecting…", _C_WAIT)
-
-    def _on_avf_failed(self, reason: str):
-        """AVFoundation path failed — remember it and fall back to tunnel."""
-        self._avf_available = False
-        self._stop()
-
-        # If we already have a tunnel from a previous session, use it immediately.
-        if self._rsd_host:
-            self._begin_capture(try_avf=False)
-            return
-
-        # Otherwise prompt for tunnel (password dialog or Windows admin check).
-        if sys.platform == "win32":
-            self._start_tunnel_windows()
-        else:
-            self._prompt_tunnel()
 
     def _stop(self):
         self._timer.stop()
@@ -528,10 +506,6 @@ class MirrorWindow(QMainWindow):
         if frame_id == self._last_frame_id or raw.isNull():
             return
         self._last_frame_id = frame_id
-
-        # First frame from AVF path → mark it as confirmed working
-        if self._stream and self._stream.streaming_mode == "avf":
-            self._avf_available = True
 
         size = self._screen.size()
         if self._fill_active:

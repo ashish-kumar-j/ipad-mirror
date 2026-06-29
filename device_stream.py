@@ -130,17 +130,7 @@ class DeviceStream(QObject):
     # ------------------------------------------------------------------
 
     def _run(self):
-        # ── Path 0: AVFoundation (macOS only, no tunnel, QuickTime latency) ──
-        if sys.platform == "darwin":
-            err = self._try_avf()
-            if err is None:
-                return   # AVF ran cleanly until stopped
-            # Emit from this thread → Qt queues the signal to the main thread
-            self.avf_failed.emit(err)
-            if not self._rsd_host:
-                return   # No tunnel host available → nothing more to try
-
-        # ── Path 1+2: asyncio HEVC → DVT (requires RSD tunnel host) ──
+        # Path 1+2: asyncio HEVC → DVT (requires RSD tunnel host)
         loop = asyncio.new_event_loop()
         loop.set_exception_handler(lambda l, ctx: None)
         asyncio.set_event_loop(loop)
