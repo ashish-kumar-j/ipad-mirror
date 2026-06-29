@@ -23,7 +23,7 @@ echo ""
 # ── 1. Install Python build dependencies ─────────────────────────────────────
 echo "▸ Installing Python dependencies…"
 $PYTHON -m pip install -q --upgrade \
-    pyinstaller pillow \
+    pyinstaller pillow av \
     pymobiledevice3 PyQt6
 
 # ── 2. Generate icons ─────────────────────────────────────────────────────────
