@@ -218,6 +218,7 @@ class MirrorWindow(QMainWindow):
         self._is_fullscreen = False
         self._pin_active    = False
         self._fill_active   = False
+        self._last_frame_id = -1       # dedup: skip setPixmap if frame hasn't changed
 
         self._build_ui()
         self._timer = QTimer(self)
@@ -354,6 +355,7 @@ class MirrorWindow(QMainWindow):
 
     def _stop(self):
         self._timer.stop()
+        self._last_frame_id = -1
         if self._stream:
             self._stream.stop()
             self._stream = None
@@ -492,10 +494,27 @@ class MirrorWindow(QMainWindow):
             self._stop()
             self._header.set_status(f"Error: {self._stream.error}", _C_ERR)
             return
-        frame = self._stream.get_latest_frame()
-        if frame and not frame.isNull():
-            self._screen.setPixmap(QPixmap.fromImage(frame))
-            self._header.set_status(f"Mirroring  •  {self._stream.fps:.1f} fps", _C_OK)
+        raw, frame_id = self._stream.get_latest_frame()
+        if raw is None or raw.isNull() or frame_id == self._last_frame_id:
+            return
+        self._last_frame_id = frame_id
+        # Scale in the main thread with FastTransformation (10× faster than Smooth,
+        # visually indistinguishable at video frame rates)
+        size = self._screen.size()
+        if self._fill_active:
+            scaled = raw.scaled(size,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.FastTransformation)
+            if scaled.width() > size.width() or scaled.height() > size.height():
+                x = (scaled.width()  - size.width())  // 2
+                y = (scaled.height() - size.height()) // 2
+                scaled = scaled.copy(x, y, size.width(), size.height())
+        else:
+            scaled = raw.scaled(size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation)
+        self._screen.setPixmap(QPixmap.fromImage(scaled))
+        self._header.set_status(f"Mirroring  •  {self._stream.fps:.1f} fps", _C_OK)
 
     # ------------------------------------------------------------------
     # Qt overrides

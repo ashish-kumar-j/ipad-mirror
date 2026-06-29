@@ -15,7 +15,6 @@ import struct
 import threading
 import time
 
-from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QImage
 
 
@@ -29,17 +28,14 @@ _KEY_NAL_TYPES = {19, 20, 21}   # IDR_W_RADL, IDR_N_LP, CRA_NUT
 class DeviceStream:
     def __init__(self):
         self.running = False
-        self._frame: QImage | None = None
-        self._raw: QImage | None = None        # unscaled, for rescale-on-resize
+        self._raw: QImage | None = None        # latest decoded frame (unscaled)
+        self._raw_id: int = 0                  # incremented on every new raw frame
         self._lock = threading.Lock()
         self._thread = None
         self._fps = 0.0
         self._frame_count = 0
         self._fps_timer = 0.0
         self._error = None
-        self._display_size: QSize | None = None
-        self._fill_mode = False
-        self._mode_stamp = 0
         self._streaming_mode = "connecting"    # "hevc" | "dvt" | "connecting"
         # HEVC decoder (HevcToBgraTranscoder, created lazily)
         self._transcoder = None
@@ -54,14 +50,10 @@ class DeviceStream:
     # ------------------------------------------------------------------
 
     def set_display_size(self, size: QSize):
-        self._display_size = size
-        self._mode_stamp += 1
-        self._rescale_current()
+        pass   # scaling now happens in the Qt tick — nothing to do here
 
     def set_fill_mode(self, fill: bool):
-        self._fill_mode = fill
-        self._mode_stamp += 1
-        self._rescale_current()
+        pass   # fill mode is read by mirror_window directly
 
     def start(self, rsd_host=None, rsd_port=None):
         self._error = None
@@ -81,9 +73,10 @@ class DeviceStream:
             self._thread.join(timeout=5)
         self._thread = None
 
-    def get_latest_frame(self) -> QImage | None:
+    def get_latest_frame(self) -> tuple[QImage | None, int]:
+        """Return (raw_QImage, frame_id). frame_id increments on every new frame."""
         with self._lock:
-            return self._frame
+            return self._raw, self._raw_id
 
     @property
     def fps(self) -> float:
@@ -98,33 +91,8 @@ class DeviceStream:
         return self._streaming_mode
 
     # ------------------------------------------------------------------
-    # Shared helpers
+    # Helpers
     # ------------------------------------------------------------------
-
-    def _rescale_current(self):
-        """Re-scale the cached raw frame when display size or fill mode changes."""
-        with self._lock:
-            raw = self._raw
-        if raw is not None and not raw.isNull():
-            scaled = self._scale(raw)
-            with self._lock:
-                self._frame = scaled
-
-    def _scale(self, img: QImage) -> QImage:
-        target = self._display_size
-        if not target or img.isNull():
-            return img
-        ratio_mode = (
-            Qt.AspectRatioMode.KeepAspectRatioByExpanding
-            if self._fill_mode
-            else Qt.AspectRatioMode.KeepAspectRatio
-        )
-        out = img.scaled(target, ratio_mode, Qt.TransformationMode.SmoothTransformation)
-        if self._fill_mode and (out.width() > target.width() or out.height() > target.height()):
-            x = (out.width() - target.width()) // 2
-            y = (out.height() - target.height()) // 2
-            out = out.copy(x, y, target.width(), target.height())
-        return out
 
     def _tick_fps(self):
         self._frame_count += 1
@@ -325,15 +293,13 @@ class DeviceStream:
         tr = self._transcoder
         if tr is None:
             return
-        # QImage from raw BGRA — .copy() makes it own its buffer so `bgra` can be freed
+        # Wrap buffer then .copy() so the BGRA bytes can be freed immediately.
         raw = QImage(
             bgra, tr.width, tr.height, tr.width * 4, QImage.Format.Format_BGRA8888
         ).copy()
         with self._lock:
             self._raw = raw
-        scaled = self._scale(raw)
-        with self._lock:
-            self._frame = scaled
+            self._raw_id += 1
         self._tick_fps()
 
     async def _rtcp_loop(self, transport, sender_ip: str, sender_port: int) -> None:
@@ -379,25 +345,21 @@ class DeviceStream:
 
         try:
             png = await take_fn()
-            stamp = self._mode_stamp
-            fut = loop.run_in_executor(executor, self._decode_png, png, stamp)
+            fut = loop.run_in_executor(executor, self._decode_png, png)
 
             while self.running:
                 cap = asyncio.create_task(take_fn())
-                img, used = await fut
+                raw = await fut
                 with self._lock:
-                    if used == self._mode_stamp:
-                        self._frame = img
+                    self._raw = raw
+                    self._raw_id += 1
                 self._tick_fps()
                 png = await cap
-                stamp = self._mode_stamp
-                fut = loop.run_in_executor(executor, self._decode_png, png, stamp)
+                fut = loop.run_in_executor(executor, self._decode_png, png)
         finally:
             executor.shutdown(wait=False)
 
-    def _decode_png(self, png_bytes: bytes, stamp: int) -> tuple:
-        raw = QImage()
-        raw.loadFromData(png_bytes, "PNG")
-        with self._lock:
-            self._raw = raw
-        return self._scale(raw), stamp
+    def _decode_png(self, png_bytes: bytes) -> QImage:
+        img = QImage()
+        img.loadFromData(png_bytes, "PNG")
+        return img
